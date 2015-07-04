@@ -2,13 +2,18 @@
 #include "TcpClient.h"
 #include <sstream>
 
+
 TcpClient::TcpClient()
+	:pThread(NULL)
+	, IsEnd(false)
 {
+	Init();
 }
 
 
 TcpClient::~TcpClient()
 {
+	WSACleanup();
 }
 
 
@@ -37,6 +42,32 @@ bool TcpClient::Init()
 
 bool TcpClient::Connect(std::string address, int port)
 {
+	this->address = address;
+	this->port = port;
+
+	
+	StopRecvThread();
+
+	pThread = new std::thread(OnRecvThread, this);
+
+}
+
+int TcpClient::Send(LPBYTE sendBuffer, int sendSize)
+{
+	return send(sock, (const char*)sendBuffer, sendSize, 0);
+}
+
+
+void TcpClient::Disconnect()
+{
+	StopRecvThread();
+	closesocket(sock);
+
+	
+}
+
+bool TcpClient::_Connect()
+{
 	struct sockaddr_in server;
 	server.sin_family = AF_INET;
 	server.sin_port = htons((u_short)port);
@@ -44,7 +75,7 @@ bool TcpClient::Connect(std::string address, int port)
 	const char* deststr = address.c_str();
 	server.sin_addr.S_un.S_addr = inet_addr(deststr);
 
-	if (server.sin_addr.S_un.S_addr == 0xffffffff) 
+	if (server.sin_addr.S_un.S_addr == 0xffffffff)
 	{
 		struct hostent *host;
 
@@ -55,17 +86,17 @@ bool TcpClient::Connect(std::string address, int port)
 			{
 				printf("host not found : %s\n", deststr);
 			}
-			return 1;
+			return false;
 		}
 
 		unsigned int **addrptr = (unsigned int **)host->h_addr_list;
 
-		while (*addrptr != NULL) 
+		while (*addrptr != NULL)
 		{
 			server.sin_addr.S_un.S_addr = *(*addrptr);
 
 			// connect()が成功したらloopを抜けます
-			if (connect(sock, (struct sockaddr *)&server, sizeof(server)) == 0) 
+			if (connect(sock, (struct sockaddr *)&server, sizeof(server)) == 0)
 			{
 				break;
 			}
@@ -75,7 +106,7 @@ bool TcpClient::Connect(std::string address, int port)
 		}
 
 		// connectが全て失敗した場合
-		if (*addrptr == NULL) 
+		if (*addrptr == NULL)
 		{
 			printf("connect : %d\n", WSAGetLastError());
 			return false;
@@ -86,36 +117,44 @@ bool TcpClient::Connect(std::string address, int port)
 		// inet_addr()が成功したとき
 
 		// connectが失敗したらエラーを表示して終了
-		if (connect(sock, (struct sockaddr *)&server, sizeof(server)) != 0) 
+		if (connect(sock, (struct sockaddr *)&server, sizeof(server)) != 0)
 		{
 			printf("connect : %d\n", WSAGetLastError());
 			return false;
 		}
 	}
 
-	return true;
 }
 
-int TcpClient::Send(LPBYTE sendBuffer, int sendSize)
+void TcpClient::OnRecvThread(TcpClient* pClient)
 {
-	return send(sock, sendBuffer, sendSize, 0);
+	pClient->_OnRecvThread();
 }
-
-void TcpClient::Recv()
+void TcpClient::_OnRecvThread()
 {
-	memset(buf, 0, sizeof(buf));
-	int n = recv(sock, buf, sizeof(buf), 0);
-	if (n < 0) {
-		printf("recv : %d\n", WSAGetLastError());
-		return 1;
+	while (!IsEnd)
+	{
+		int rcvResutl = recv(sock, (char*)rcvBuffer, sizeof(rcvBuffer), 0);
+
+		if (rcvResutl <= 0 && !IsEnd)
+		{
+			// 接続が切れたから再接続を試みる
+		}
+
+
 	}
-
-	printf("%d, %s\n", n, buf);
+	
 }
 
-void TcpClient::Disconnect()
+void TcpClient::StopRecvThread()
 {
-	closesocket(sock);
+	if (pThread)
+	{
+		if (pThread->joinable())
+		{
+			pThread->join();
+		}
 
-	WSACleanup();
+		delete pThread;
+	}
 }
