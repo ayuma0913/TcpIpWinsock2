@@ -1,7 +1,8 @@
 #include "stdafx.h"
 #include "TcpClient.h"
 #include <sstream>
-
+#include <ws2def.h>
+#include <WS2tcpip.h> 
 
 TcpClient::TcpClient()
 	:pThread(NULL)
@@ -37,14 +38,15 @@ bool TcpClient::Init()
 		return false;
 	}
 	
+	return true;
 }
 
 
-bool TcpClient::Connect(std::string address, int port)
+void TcpClient::Connect(std::string address, int port, ONRECVFUNC onRecvFunc)
 {
 	this->address = address;
 	this->port = port;
-
+	this->pRcvFunc = onRecvFunc;
 	
 	StopRecvThread();
 
@@ -73,14 +75,17 @@ bool TcpClient::_Connect()
 	server.sin_port = htons((u_short)port);
 
 	const char* deststr = address.c_str();
-	server.sin_addr.S_un.S_addr = inet_addr(deststr);
 
-	if (server.sin_addr.S_un.S_addr == 0xffffffff)
+	if (inet_pton(AF_INET, deststr, &server.sin_addr.S_un) != 1)
 	{
-		struct hostent *host;
+		struct addrinfo hints;
+		struct addrinfo* address;
+		::ZeroMemory(&hints, sizeof(hints));
+		// ヒントとしてIPネットワークプロトコルとTCP通信のソケットタイプを指定
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_STREAM;
 
-		host = gethostbyname(deststr);
-		if (host == NULL)
+		if (getaddrinfo(deststr, std::to_string(port).c_str(), &hints, &address))
 		{
 			if (WSAGetLastError() == WSAHOST_NOT_FOUND)
 			{
@@ -89,24 +94,7 @@ bool TcpClient::_Connect()
 			return false;
 		}
 
-		unsigned int **addrptr = (unsigned int **)host->h_addr_list;
-
-		while (*addrptr != NULL)
-		{
-			server.sin_addr.S_un.S_addr = *(*addrptr);
-
-			// connect()が成功したらloopを抜けます
-			if (connect(sock, (struct sockaddr *)&server, sizeof(server)) == 0)
-			{
-				break;
-			}
-
-			addrptr++;
-			// connectが失敗したら次のアドレスで試す
-		}
-
-		// connectが全て失敗した場合
-		if (*addrptr == NULL)
+		if (connect(sock, address->ai_addr, address->ai_addrlen) != 0)
 		{
 			printf("connect : %d\n", WSAGetLastError());
 			return false;
@@ -114,9 +102,6 @@ bool TcpClient::_Connect()
 	}
 	else
 	{
-		// inet_addr()が成功したとき
-
-		// connectが失敗したらエラーを表示して終了
 		if (connect(sock, (struct sockaddr *)&server, sizeof(server)) != 0)
 		{
 			printf("connect : %d\n", WSAGetLastError());
@@ -124,6 +109,7 @@ bool TcpClient::_Connect()
 		}
 	}
 
+	return true;
 }
 
 void TcpClient::OnRecvThread(TcpClient* pClient)
@@ -134,11 +120,19 @@ void TcpClient::_OnRecvThread()
 {
 	while (!IsEnd)
 	{
-		int rcvResutl = recv(sock, (char*)rcvBuffer, sizeof(rcvBuffer), 0);
+		int rcvResult = recv(sock, (char*)rcvBuffer, sizeof(rcvBuffer), 0);
 
-		if (rcvResutl <= 0 && !IsEnd)
+		if (rcvResult > 0)
+		{
+			if (pRcvFunc) pRcvFunc(rcvBuffer, rcvResult);
+		}
+		else if (!IsEnd)
 		{
 			// 接続が切れたから再接続を試みる
+			if (!_Connect())
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+			}
 		}
 
 

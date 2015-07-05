@@ -2,6 +2,8 @@
 #include <winsock2.h>
 #include <thread>
 
+typedef void(*ONRECVFUNC)(LPBYTE,int);
+
 class TcpClient
 {
 public:
@@ -9,7 +11,7 @@ public:
 	virtual ~TcpClient();
 
 	
-	void Connect(std::string address, int port);
+	void Connect(std::string address, int port, ONRECVFUNC onRecvFunc);
 	int  Send(LPBYTE sendBuffer, int sendSize);
 	void Disconnect();
 
@@ -26,6 +28,7 @@ private:
 	SOCKET sock;
 	std::thread* pThread;
 	BYTE rcvBuffer[1024];
+	ONRECVFUNC pRcvFunc;
 
 	bool IsEnd;
 };
